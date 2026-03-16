@@ -1,0 +1,108 @@
+# Multi-Agent 组织智能分析系统配置
+
+# 应用配置
+app:
+  name: "HR Analytics Multi-Agent System"
+  version: "1.0.0"
+  debug: true
+
+# 数据库配置
+database:
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017}
+    database: hr_analytics
+    max_pool_size: 100
+    min_pool_size: 10
+
+# LLM 配置
+llm:
+  default_provider: openai
+  providers:
+    openai:
+      api_key: ${OPENAI_API_KEY}
+      model: gpt-4o
+      temperature: 0.7
+      max_tokens: 4096
+    qwen:
+      api_key: ${QWEN_API_KEY}
+      model: qwen-max
+      temperature: 0.7
+    glm:
+      api_key: ${GLM_API_KEY}
+      model: glm-4
+      temperature: 0.7
+    ollama:
+      base_url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      model: llama3
+      temperature: 0.7
+
+# Agent 配置
+agents:
+  orchestrator:
+    max_iterations: 10
+    timeout_seconds: 300
+  data_governance:
+    batch_size: 10000
+    quality_threshold: 0.8
+  recruitment:
+    roi_threshold: 2.0
+    funnel_benchmark:
+      screening_pass_rate: 0.3
+      interview_pass_rate: 0.4
+      offer_accept_rate: 0.7
+  performance:
+    forced_distribution:
+      S: 0.05
+      A: 0.20
+      B: 0.50
+      C: 0.20
+      D: 0.05
+  talent_risk:
+    high_risk_threshold: 0.7
+    critical_risk_threshold: 0.85
+  org_health:
+    healthy_turnover_rate: 0.15
+    optimal_span_of_control: [5, 10]
+
+# 数据生成配置
+data_generation:
+  seed: 42
+  default_employee_count: 5000000
+  distributions:
+    age:
+      mean: 32
+      std: 8
+      min: 22
+      max: 60
+    tenure:
+      lambda: 0.3 # 指数分布参数
+    salary:
+      mean: 10.5 # 对数正态分布参数 (ln scale)
+      std: 0.5
+
+# API 配置
+api:
+  prefix: /api/v1
+  cors:
+    allow_origins:
+      - "http://localhost:3000"
+      - "http://127.0.0.1:3000"
+    allow_methods:
+      - "*"
+    allow_headers:
+      - "*"
+
+# 日志配置
+logging:
+  level: INFO
+  format: "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+  file:
+    path: logs/app.log
+    rotation: "10 MB"
+    retention: "7 days"
+
+# 缓存配置
+cache:
+  enabled: true
+  ttl_seconds: 3600
+  max_size: 1000

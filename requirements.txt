@@ -1,0 +1,41 @@
+# Core Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# LangChain / LangGraph
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-community>=0.0.16
+langgraph>=0.0.20
+
+# Database
+motor>=3.3.2
+pymongo>=4.6.1
+
+# Data Generation & Processing
+faker>=22.0.0
+pandas>=2.1.4
+numpy>=1.26.3
+openpyxl>=3.1.2
+
+# LLM Providers
+openai>=1.10.0
+dashscope>=1.14.1  # Qwen/通义千问
+zhipuai>=2.0.1     # GLM/智谱
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+httpx>=0.26.0
+aiofiles>=23.2.1
+
+# Testing
+pytest>=7.4.4
+pytest-asyncio>=0.23.3
+pytest-cov>=4.1.0
+
+# Logging & Monitoring
+loguru>=0.7.2
+rich>=13.7.0

@@ -1,0 +1,65 @@
+version: "3.8"
+
+services:
+  # MongoDB 数据库
+  mongo:
+    image: mongo:7
+    container_name: hr-analytics-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./data/mongo-init:/docker-entrypoint-initdb.d
+    environment:
+      - MONGO_INITDB_DATABASE=hr_analytics
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hr-network
+
+  # FastAPI 后端
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: hr-analytics-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/hr_analytics
+      - ENVIRONMENT=development
+    env_file:
+      - .env
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./config.yaml:/app/config.yaml
+    networks:
+      - hr-network
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # React 前端
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hr-analytics-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - hr-network
+
+volumes:
+  mongo_data:
+    driver: local
+
+networks:
+  hr-network:
+    driver: bridge
