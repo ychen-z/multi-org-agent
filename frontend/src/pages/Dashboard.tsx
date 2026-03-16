@@ -19,11 +19,17 @@ export default function Dashboard() {
     queryFn: () => analysisApi.recruitment(),
   });
 
+  const { data: orgHealthData } = useQuery({
+    queryKey: ["org-health"],
+    queryFn: () => analysisApi.orgHealth(),
+  });
+
   if (statsLoading) return <Loading />;
 
   const statsData = stats?.data || {};
   const riskDist = riskData?.data?.risk_distribution || {};
   const channelStats = recruitData?.data?.channel_stats || [];
+  const orgHealth = orgHealthData?.data || {};
 
   return (
     <div className="space-y-6">
@@ -92,13 +98,25 @@ export default function Dashboard() {
       {/* 组织健康度 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card title="组织健康度">
-          <GaugeChart value={78} title="综合评分" height={200} />
+          <GaugeChart
+            value={orgHealth.health_score || 0}
+            title="综合评分"
+            height={200}
+          />
         </Card>
         <Card title="人员稳定性">
-          <GaugeChart value={85} title="稳定性评分" height={200} />
+          <GaugeChart
+            value={orgHealth.stability_score || 0}
+            title="稳定性评分"
+            height={200}
+          />
         </Card>
         <Card title="编制利用率">
-          <GaugeChart value={92} title="利用率" height={200} />
+          <GaugeChart
+            value={Math.min(orgHealth.utilization_rate || 0, 100)}
+            title="利用率"
+            height={200}
+          />
         </Card>
       </div>
 

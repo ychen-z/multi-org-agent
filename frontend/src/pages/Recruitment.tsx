@@ -14,11 +14,12 @@ export default function Recruitment() {
   const channelStats = data?.data?.channel_stats || [];
   const summary = data?.data?.summary || {};
 
-  // 计算漏斗数据
-  const funnelData = [
+  // 使用后端返回的真实漏斗数据
+  const funnelData = data?.data?.funnel_data || [
     { name: "简历", value: summary.total_records || 0 },
-    { name: "面试", value: Math.floor((summary.total_records || 0) * 0.3) },
-    { name: "Offer", value: Math.floor((summary.total_records || 0) * 0.15) },
+    { name: "筛选", value: 0 },
+    { name: "面试", value: 0 },
+    { name: "Offer", value: 0 },
     { name: "入职", value: summary.total_hired || 0 },
   ];
 
