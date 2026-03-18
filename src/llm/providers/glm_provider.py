@@ -6,7 +6,7 @@ import json
 from typing import List, AsyncGenerator
 
 from zhipuai import ZhipuAI
-from loguru import logger
+from Logging import logger
 
 from ..base import LLMProvider, Message, Tool, ToolCall, ToolCallResult
 

@@ -10,7 +10,7 @@ from pathlib import Path
 import io
 
 import pandas as pd
-from loguru import logger
+from Logging import logger
 
 from .mongodb import mongodb
 from .models import Employee, Department, PerformanceRecord, RecruitmentRecord

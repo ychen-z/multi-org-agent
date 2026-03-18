@@ -6,7 +6,7 @@
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 
-from loguru import logger
+from Logging import logger
 
 from .base_agent import BaseAgent, AgentMessage, AgentResponse, AgentTool
 from src.data.mongodb import mongodb
@@ -94,19 +94,37 @@ class RecruitmentAgent(BaseAgent):
         ))
     
     async def process(self, message: AgentMessage) -> AgentResponse:
-        """处理消息"""
+        """处理消息 - 支持按需 LLM 洞察"""
         task = message.payload.get("task", "")
+        include_insights = message.payload.get("include_insights")
         
         try:
             if "ROI" in task.upper() or "渠道" in task:
-                result = await self.analyze_channel_roi()
+                result = await self.analyze_channel_roi(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "漏斗" in task or "转化" in task:
-                result = await self.analyze_funnel()
+                result = await self.analyze_funnel(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "建议" in task or "优化" in task:
-                result = await self.generate_recommendations()
+                result = await self.generate_recommendations(
+                    include_insights=include_insights,
+                    task=task
+                )
+            elif "瓶颈" in task:
+                result = await self.identify_bottlenecks(
+                    include_insights=include_insights,
+                    task=task
+                )
             else:
                 # 运行完整分析
-                result = await self.run_full_analysis()
+                result = await self.run_full_analysis(
+                    include_insights=include_insights,
+                    task=task
+                )
             
             return AgentResponse(success=True, data=result)
             
@@ -114,10 +132,112 @@ class RecruitmentAgent(BaseAgent):
             logger.error(f"RecruitmentAgent error: {e}")
             return AgentResponse(success=False, error=str(e))
     
+    async def _generate_recruitment_insights(
+        self,
+        data: Dict[str, Any],
+        analysis_type: str,
+        task: Optional[str] = None
+    ) -> str:
+        """生成招聘分析洞察"""
+        
+        prompts = {
+            "channel_roi": f"""作为招聘效能专家，分析以下招聘渠道 ROI 数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请从以下角度提供深度洞察：
+1. 哪些渠道性价比最高？为什么？
+2. 低效渠道的问题根因是什么？
+3. 渠道组合优化建议
+4. 预计优化后的成本节省
+
+{f"用户特别关注：{task}" if task else ""}
+
+要求：简洁、数据支撑、可执行""",
+
+            "funnel": f"""作为招聘流程专家，分析以下招聘漏斗数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 瓶颈环节的根本原因分析
+2. 与行业基准的对比解读
+3. 每个环节的具体优化措施
+4. 优化优先级排序
+
+{f"用户特别关注：{task}" if task else ""}
+
+要求：具体、可落地、有预期效果""",
+
+            "bottleneck": f"""作为招聘诊断专家，分析以下招聘瓶颈：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 瓶颈的系统性原因
+2. 相互关联的问题
+3. 解决优先级和依赖关系
+4. 立即可行的改进措施
+
+{f"用户特别关注：{task}" if task else ""}""",
+
+            "recommendations": f"""作为招聘策略专家，基于以下分析结果：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请生成：
+1. 战略级优化建议（长期）
+2. 战术级优化建议（短期）
+3. 快速见效的改进（Quick Wins）
+4. 每项建议的预期 ROI
+
+{f"用户特别关注：{task}" if task else ""}"""
+        }
+        
+        prompt = prompts.get(analysis_type, prompts["channel_roi"])
+        return await self.generate_insights(prompt, data, analysis_type)
+    
+    def _get_recruitment_fallback_insight(
+        self, 
+        data: Dict[str, Any], 
+        analysis_type: str
+    ) -> str:
+        """招聘分析回退洞察"""
+        
+        if analysis_type == "channel_roi":
+            metrics = data.get("channel_metrics", [])
+            if metrics:
+                top = metrics[0] if metrics else {}
+                return (
+                    f"渠道分析显示：{top.get('channel', '未知')} 渠道 ROI 最高，"
+                    f"转化率 {top.get('conversion_rate', 0)}%。"
+                    f"建议优化低效渠道以降低招聘成本。"
+                )
+        
+        elif analysis_type == "funnel":
+            bottleneck = data.get("bottleneck", {})
+            return (
+                f"漏斗分析显示：{bottleneck.get('stage_name', '未知')} 环节流失率最高，"
+                f"达 {bottleneck.get('drop_rate', 0)}%。建议重点优化该环节。"
+            )
+        
+        elif analysis_type == "bottleneck":
+            issues = data.get("bottlenecks", [])
+            high_severity = len([b for b in issues if b.get("severity") == "high"])
+            return f"发现 {len(issues)} 个瓶颈问题，其中 {high_severity} 个需紧急处理。"
+        
+        return "数据分析完成，建议结合业务场景深入解读。"
+    
     async def analyze_channel_roi(
         self,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
     ) -> Dict[str, Any]:
         """分析各招聘渠道 ROI"""
         
@@ -185,7 +305,7 @@ class RecruitmentAgent(BaseAgent):
         efficient_channels = [c for c in channel_metrics if c["is_efficient"]]
         inefficient_channels = [c for c in channel_metrics if not c["is_efficient"]]
         
-        return {
+        result = {
             "analysis_period": {
                 "start": start_date,
                 "end": end_date
@@ -204,11 +324,27 @@ class RecruitmentAgent(BaseAgent):
                 "channels_to_review": [c["channel"] for c in inefficient_channels]
             }
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_recruitment_insights(
+                    result, "channel_roi", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate channel ROI insights: {e}")
+                result["ai_insights"] = self._get_recruitment_fallback_insight(
+                    result, "channel_roi"
+                )
+        
+        return result
     
     async def analyze_funnel(
         self,
         department_id: Optional[str] = None,
-        position_id: Optional[str] = None
+        position_id: Optional[str] = None,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
     ) -> Dict[str, Any]:
         """分析招聘漏斗"""
         
@@ -258,7 +394,7 @@ class RecruitmentAgent(BaseAgent):
         # 识别最大流失环节
         max_drop = max(funnel, key=lambda x: x["drop_rate"])
         
-        return {
+        result = {
             "filters": {
                 "department_id": department_id,
                 "position_id": position_id
@@ -277,6 +413,20 @@ class RecruitmentAgent(BaseAgent):
                 "drop_rate": max_drop["drop_rate"]
             }
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_recruitment_insights(
+                    result, "funnel", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate funnel insights: {e}")
+                result["ai_insights"] = self._get_recruitment_fallback_insight(
+                    result, "funnel"
+                )
+        
+        return result
     
     async def calculate_time_to_hire(
         self,
@@ -334,7 +484,11 @@ class RecruitmentAgent(BaseAgent):
             "fastest": metrics[0] if metrics else None
         }
     
-    async def identify_bottlenecks(self) -> Dict[str, Any]:
+    async def identify_bottlenecks(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """识别招聘瓶颈"""
         
         funnel = await self.analyze_funnel()
@@ -374,13 +528,36 @@ class RecruitmentAgent(BaseAgent):
                 "suggestion": f"考虑关闭或优化: {', '.join(inefficient[:3])}"
             })
         
-        return {
+        result = {
             "bottlenecks": bottlenecks,
             "total_issues": len(bottlenecks),
-            "high_severity_count": len([b for b in bottlenecks if b["severity"] == "high"])
+            "high_severity_count": len([b for b in bottlenecks if b["severity"] == "high"]),
+            "details": {
+                "funnel_summary": funnel["summary"],
+                "time_summary": time_metrics["summary"],
+                "channel_summary": channel_analysis["summary"]
+            }
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_recruitment_insights(
+                    result, "bottleneck", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate bottleneck insights: {e}")
+                result["ai_insights"] = self._get_recruitment_fallback_insight(
+                    result, "bottleneck"
+                )
+        
+        return result
     
-    async def generate_recommendations(self) -> Dict[str, Any]:
+    async def generate_recommendations(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """生成招聘优化建议"""
         
         channel_analysis = await self.analyze_channel_roi()
@@ -433,7 +610,7 @@ class RecruitmentAgent(BaseAgent):
                     "effort": "medium"
                 })
         
-        return {
+        result = {
             "recommendations": recommendations,
             "summary": {
                 "total_recommendations": len(recommendations),
@@ -441,16 +618,50 @@ class RecruitmentAgent(BaseAgent):
                 "quick_wins": len([r for r in recommendations if r.get("effort") == "low"])
             }
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_recruitment_insights(
+                    result, "recommendations", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate recommendation insights: {e}")
+                result["ai_insights"] = "建议基于数据分析生成，请结合业务实际情况执行。"
+        
+        return result
     
-    async def run_full_analysis(self) -> Dict[str, Any]:
+    async def run_full_analysis(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """运行完整招聘分析"""
-        return {
+        result = {
             "channel_roi": await self.analyze_channel_roi(),
             "funnel": await self.analyze_funnel(),
             "time_to_hire": await self.calculate_time_to_hire(),
             "bottlenecks": await self.identify_bottlenecks(),
             "recommendations": await self.generate_recommendations()
         }
+        
+        # 按需生成综合洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                summary_data = {
+                    "渠道效率": result["channel_roi"]["summary"],
+                    "漏斗瓶颈": result["funnel"]["bottleneck"],
+                    "招聘周期": result["time_to_hire"]["summary"],
+                    "问题数量": result["bottlenecks"]["total_issues"]
+                }
+                result["ai_insights"] = await self._generate_recruitment_insights(
+                    summary_data, "recommendations", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate full analysis insights: {e}")
+                result["ai_insights"] = "完整分析已完成，请查看各模块详细数据。"
+        
+        return result
     
     def _get_stage_name(self, stage: str) -> str:
         """获取阶段中文名"""

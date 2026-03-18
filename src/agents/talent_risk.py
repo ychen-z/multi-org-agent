@@ -6,9 +6,9 @@
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-from loguru import logger
+from Logging import logger
 
-from .base_agent import BaseAgent, AgentMessage, AgentResponse, AgentTool
+from .base_agent import BaseAgent, AgentMessage, AgentResponse, AgentTool, INSIGHT_TRIGGER_KEYWORDS
 from src.data.mongodb import mongodb
 
 
@@ -109,26 +109,79 @@ class TalentRiskAgent(BaseAgent):
         ))
     
     async def process(self, message: AgentMessage) -> AgentResponse:
-        """处理消息"""
+        """
+        处理消息 - 支持按需 LLM 洞察
+        """
         task = message.payload.get("task", "")
+        include_insights = message.payload.get("include_insights")
+        department_id = message.payload.get("department_id")
         
         try:
+            # 1. 根据任务类型查询数据
             if "高风险" in task or "离职" in task:
-                result = await self.get_high_risk_employees()
+                result = await self.get_high_risk_employees(department_id=department_id)
             elif "高潜" in task or "潜力" in task:
                 result = await self.identify_high_potentials()
             elif "团队" in task or "稳定" in task:
-                result = await self.analyze_team_stability()
-            elif "保留" in task or "挽留" in task:
+                result = await self.analyze_team_stability(department_id=department_id)
+            elif "保留" in task or "挽留" in task or "建议" in task:
                 result = await self.generate_retention_actions()
+            elif "因素" in task:
+                result = await self.analyze_risk_factors()
             else:
                 result = await self.run_full_analysis()
+            
+            # 2. 判断是否需要 AI 洞察
+            if self._need_insights(task, include_insights):
+                # 生成 AI 洞察
+                ai_insights = await self._generate_risk_insights(result, task)
+                result["ai_insights"] = ai_insights or self._get_fallback_insight(result)
+                result["ai_generated"] = ai_insights is not None
             
             return AgentResponse(success=True, data=result)
             
         except Exception as e:
             logger.error(f"TalentRiskAgent error: {e}")
             return AgentResponse(success=False, error=str(e))
+    
+    async def _generate_risk_insights(
+        self, 
+        data: Dict[str, Any], 
+        task: str
+    ) -> Optional[str]:
+        """
+        生成风险分析洞察
+        """
+        # 使用专业的风险分析 prompt
+        prompt_template = """你是一位资深的人才风险管理专家。
+
+## 风险数据
+{data_summary}
+
+## 用户问题
+{user_query}
+
+## 要求
+请基于数据提供专业的风险分析洞察：
+1. **风险评估**：整体风险水平和主要风险点
+2. **原因分析**：风险背后的关键驱动因素
+3. **建议措施**：具体可执行的干预建议
+
+每条建议要具体、可操作。保持简洁专业。
+"""
+        return await self.generate_insights(data, task, prompt_template)
+    
+    def _get_fallback_insight(self, data: Dict[str, Any]) -> str:
+        """风险分析的回退洞察"""
+        risk_summary = data.get("risk_summary", {})
+        high_risk = risk_summary.get("risk_distribution", {}).get("high", 0)
+        critical = risk_summary.get("risk_distribution", {}).get("critical", 0)
+        total_high_risk = high_risk + critical
+        
+        if total_high_risk > 0:
+            return f"发现 {total_high_risk} 名高风险员工，建议优先约谈了解情况。主要关注薪资竞争力和职业发展两个维度。"
+        else:
+            return "整体人才风险可控，建议持续关注绩效波动和市场薪资变化。"
     
     async def get_risk_summary(self) -> Dict[str, Any]:
         """获取整体风险摘要"""

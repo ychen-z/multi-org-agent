@@ -5,7 +5,7 @@ LLM 工厂类
 
 from typing import Optional, Dict, Any
 
-from loguru import logger
+from Logging import logger
 
 from .base import LLMProvider
 from .providers import OpenAIProvider, QwenProvider, GLMProvider, OllamaProvider
@@ -72,13 +72,26 @@ def get_llm(
     provider: Optional[str] = None,
     **kwargs
 ) -> LLMProvider:
-    """获取 LLM 实例的便捷函数"""
+    """
+    获取 LLM 实例的便捷函数
+    
+    支持从环境变量自动配置:
+    - DEFAULT_LLM_PROVIDER: 默认 provider (openai/qwen/glm/ollama)
+    - OPENAI_API_KEY: OpenAI API Key
+    - BASE_URL: 自定义 base URL (用于 OpenAI 兼容接口如 MiniMax)
+    """
     from src.config import get_settings
     
     settings = get_settings()
     
+    # 优先使用环境变量中的 default_llm_provider
     if provider is None:
-        provider = settings.llm.default_provider
+        env_provider = settings.default_llm_provider
+        # 如果是 OpenAI 兼容的第三方 provider，映射到 openai
+        if env_provider and env_provider.lower() not in ["openai", "qwen", "glm", "ollama"]:
+            provider = "openai"  # 使用 OpenAI provider 但配合自定义 base_url
+        else:
+            provider = env_provider or settings.llm.default_provider
     
     # 从配置获取 provider 设置
     provider_config = {}
@@ -89,7 +102,29 @@ def get_llm(
         elif hasattr(provider_config, 'model_dump'):
             provider_config = provider_config.model_dump()
     
+    # 从环境变量补充配置
+    if provider == "openai":
+        if not provider_config.get("api_key") and settings.openai_api_key:
+            provider_config["api_key"] = settings.openai_api_key
+        if not provider_config.get("base_url") and settings.base_url:
+            provider_config["base_url"] = settings.base_url
+        # MiniMax 等兼容 provider 可能需要特定 model
+        if settings.default_llm_provider and settings.default_llm_provider.lower() not in ["openai"]:
+            if not provider_config.get("model"):
+                provider_config["model"] = settings.default_llm_provider
+    elif provider == "qwen":
+        if not provider_config.get("api_key") and settings.qwen_api_key:
+            provider_config["api_key"] = settings.qwen_api_key
+    elif provider == "glm":
+        if not provider_config.get("api_key") and settings.glm_api_key:
+            provider_config["api_key"] = settings.glm_api_key
+    elif provider == "ollama":
+        if not provider_config.get("base_url") and settings.ollama_base_url:
+            provider_config["base_url"] = settings.ollama_base_url
+    
     # 合并配置
     config = {**provider_config, **kwargs}
+    
+    logger.debug(f"Creating LLM: provider={provider}, config keys={list(config.keys())}")
     
     return LLMFactory.get_or_create(provider, **config)

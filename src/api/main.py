@@ -9,7 +9,7 @@ from typing import Any, Dict
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from loguru import logger
+from Logging import logger
 from pydantic import BaseModel
 
 from src.config import settings

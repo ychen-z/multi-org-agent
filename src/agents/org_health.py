@@ -6,7 +6,7 @@
 from typing import Dict, List, Any, Optional
 from datetime import datetime, date
 
-from loguru import logger
+from Logging import logger
 
 from .base_agent import BaseAgent, AgentMessage, AgentResponse, AgentTool
 from src.data.mongodb import mongodb
@@ -69,29 +69,175 @@ class OrgHealthAgent(BaseAgent):
         ))
     
     async def process(self, message: AgentMessage) -> AgentResponse:
-        """处理消息"""
+        """处理消息 - 支持按需 LLM 洞察"""
         task = message.payload.get("task", "")
+        include_insights = message.payload.get("include_insights")
         
         try:
             if "人效" in task:
-                result = await self.analyze_headcount()
+                result = await self.analyze_headcount(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "编制" in task:
-                result = await self.analyze_headcount_budget()
+                result = await self.analyze_headcount_budget(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "结构" in task:
-                result = await self.analyze_org_structure()
+                result = await self.analyze_org_structure(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "人口" in task or "年龄" in task or "司龄" in task:
-                result = await self.analyze_demographics()
+                result = await self.analyze_demographics(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "健康" in task or "评分" in task:
-                result = await self.calculate_health_score()
+                result = await self.calculate_health_score(
+                    include_insights=include_insights,
+                    task=task
+                )
             else:
-                result = await self.run_full_analysis()
+                result = await self.run_full_analysis(
+                    include_insights=include_insights,
+                    task=task
+                )
             
             return AgentResponse(success=True, data=result)
         except Exception as e:
             logger.error(f"OrgHealthAgent error: {e}")
             return AgentResponse(success=False, error=str(e))
     
-    async def analyze_headcount(self) -> Dict[str, Any]:
+    async def _generate_health_insights(
+        self,
+        data: Dict[str, Any],
+        analysis_type: str,
+        task: Optional[str] = None
+    ) -> str:
+        """生成组织健康分析洞察"""
+        
+        prompts = {
+            "headcount": f"""作为组织效能专家，分析以下人效数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 人员规模与效能评估
+2. 离职率分析及根因
+3. 各部门人效差异解读
+4. 人力配置优化建议
+
+{f"用户特别关注：{task}" if task else ""}
+
+要求：数据支撑、可量化改进""",
+
+            "budget": f"""作为人力规划专家，分析以下编制数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 整体编制利用率评估
+2. 超编/空缺部门分析
+3. 编制与业务的匹配度
+4. 下一年度编制规划建议
+
+{f"用户特别关注：{task}" if task else ""}""",
+
+            "structure": f"""作为组织设计专家，分析以下组织结构数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 管理幅度合理性分析
+2. 组织层级效率评估
+3. 管理者比例是否健康
+4. 组织结构优化建议
+
+{f"用户特别关注：{task}" if task else ""}""",
+
+            "demographics": f"""作为人力资源专家，分析以下人口结构数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 年龄结构是否合理
+2. 司龄分布健康度
+3. 多样性与包容性分析
+4. 人才梯队建设建议
+
+{f"用户特别关注：{task}" if task else ""}""",
+
+            "health_score": f"""作为组织诊断专家，分析以下组织健康度评分：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 综合健康度解读
+2. 各维度强弱项分析
+3. 与行业标杆的差距
+4. 优先改进领域和路径
+
+{f"用户特别关注：{task}" if task else ""}"""
+        }
+        
+        prompt = prompts.get(analysis_type, prompts["health_score"])
+        return await self.generate_insights(prompt, data, analysis_type)
+    
+    def _get_health_fallback_insight(
+        self, 
+        data: Dict[str, Any], 
+        analysis_type: str
+    ) -> str:
+        """组织健康分析回退洞察"""
+        
+        if analysis_type == "headcount":
+            summary = data.get("summary", {})
+            return (
+                f"在职员工 {summary.get('total_active', 0)} 人，"
+                f"离职率 {summary.get('turnover_rate', 0)}%，"
+                f"{'高于' if summary.get('vs_benchmark', 0) > 0 else '低于'}基准 "
+                f"{abs(summary.get('vs_benchmark', 0))}%。"
+            )
+        
+        elif analysis_type == "budget":
+            summary = data.get("summary", {})
+            return (
+                f"编制利用率 {summary.get('overall_utilization', 0)}%，"
+                f"超编部门 {summary.get('over_budget_depts', 0)} 个，"
+                f"空缺部门 {summary.get('under_budget_depts', 0)} 个。"
+            )
+        
+        elif analysis_type == "structure":
+            span = data.get("span_of_control", {})
+            return (
+                f"平均管理幅度 {span.get('average', 0)}，"
+                f"状态：{span.get('assessment', '未知')}。"
+            )
+        
+        elif analysis_type == "demographics":
+            insights = data.get("insights", [])
+            return insights[0] if insights else "人口结构分析完成，整体分布正常。"
+        
+        elif analysis_type == "health_score":
+            return (
+                f"组织健康度评分 {data.get('overall_score', 0)}，"
+                f"等级：{data.get('health_level', '未知')}。"
+            )
+        
+        return "组织健康分析完成，建议结合具体场景解读。"
+    
+    async def analyze_headcount(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """分析人效"""
         
         # 员工总数
@@ -127,7 +273,7 @@ class OrgHealthAgent(BaseAgent):
         
         level_stats = await mongodb.employees.aggregate(level_pipeline).to_list(20)
         
-        return {
+        result = {
             "summary": {
                 "total_active": total_active,
                 "total_resigned": total_resigned,
@@ -152,8 +298,26 @@ class OrgHealthAgent(BaseAgent):
             ],
             "assessment": "健康" if turnover_rate <= self.benchmarks["healthy_turnover_rate"] else "需关注"
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_health_insights(
+                    result, "headcount", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate headcount insights: {e}")
+                result["ai_insights"] = self._get_health_fallback_insight(
+                    result, "headcount"
+                )
+        
+        return result
     
-    async def analyze_headcount_budget(self) -> Dict[str, Any]:
+    async def analyze_headcount_budget(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """分析编制使用情况"""
         
         # 获取部门编制数据
@@ -205,7 +369,7 @@ class OrgHealthAgent(BaseAgent):
         
         overall_utilization = total_actual / total_budget if total_budget > 0 else 0
         
-        return {
+        result = {
             "summary": {
                 "total_budget": total_budget,
                 "total_actual": total_actual,
@@ -223,8 +387,26 @@ class OrgHealthAgent(BaseAgent):
                 f"评估空缺岗位: {', '.join(under_budget[:3])}" if under_budget else "编制利用充分"
             ]
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_health_insights(
+                    result, "budget", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate budget insights: {e}")
+                result["ai_insights"] = self._get_health_fallback_insight(
+                    result, "budget"
+                )
+        
+        return result
     
-    async def analyze_org_structure(self) -> Dict[str, Any]:
+    async def analyze_org_structure(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """分析组织结构"""
         
         # 计算管理幅度
@@ -279,7 +461,7 @@ class OrgHealthAgent(BaseAgent):
         avg_span = span_stats.get("avg_span", 0)
         optimal_min, optimal_max = self.benchmarks["optimal_span_of_control"]
         
-        return {
+        result = {
             "span_of_control": {
                 "average": round(avg_span, 2),
                 "max": span_stats.get("max_span", 0),
@@ -299,8 +481,26 @@ class OrgHealthAgent(BaseAgent):
             },
             "recommendations": self._get_structure_recommendations(avg_span, management_ratio, max_depth)
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_health_insights(
+                    result, "structure", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate structure insights: {e}")
+                result["ai_insights"] = self._get_health_fallback_insight(
+                    result, "structure"
+                )
+        
+        return result
     
-    async def analyze_demographics(self) -> Dict[str, Any]:
+    async def analyze_demographics(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """分析人口结构"""
         
         today = date.today()
@@ -370,7 +570,7 @@ class OrgHealthAgent(BaseAgent):
         
         edu_dist = await mongodb.employees.aggregate(edu_pipeline).to_list(10)
         
-        return {
+        result = {
             "age_distribution": [
                 {"range": self._get_age_range(a["_id"]), "count": a["count"]}
                 for a in age_dist if a["_id"] != "Other"
@@ -388,8 +588,26 @@ class OrgHealthAgent(BaseAgent):
             ],
             "insights": self._get_demographic_insights(age_dist, tenure_dist, gender_dist)
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_health_insights(
+                    result, "demographics", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate demographics insights: {e}")
+                result["ai_insights"] = self._get_health_fallback_insight(
+                    result, "demographics"
+                )
+        
+        return result
     
-    async def calculate_health_score(self) -> Dict[str, Any]:
+    async def calculate_health_score(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """计算组织健康度评分"""
         
         headcount = await self.analyze_headcount()
@@ -433,7 +651,7 @@ class OrgHealthAgent(BaseAgent):
         weights = {"stability": 0.3, "budget_utilization": 0.25, "structure": 0.25, "diversity": 0.2}
         overall = sum(scores[k] * weights[k] for k in weights)
         
-        return {
+        result = {
             "overall_score": round(overall, 2),
             "dimension_scores": scores,
             "health_level": self._get_health_level(overall),
@@ -443,16 +661,53 @@ class OrgHealthAgent(BaseAgent):
             },
             "recommendations": self._get_health_recommendations(scores)
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_health_insights(
+                    result, "health_score", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate health score insights: {e}")
+                result["ai_insights"] = self._get_health_fallback_insight(
+                    result, "health_score"
+                )
+        
+        return result
     
-    async def run_full_analysis(self) -> Dict[str, Any]:
+    async def run_full_analysis(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """运行完整组织健康分析"""
-        return {
+        result = {
             "headcount": await self.analyze_headcount(),
             "budget": await self.analyze_headcount_budget(),
             "structure": await self.analyze_org_structure(),
             "demographics": await self.analyze_demographics(),
             "health_score": await self.calculate_health_score()
         }
+        
+        # 按需生成综合洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                summary_data = {
+                    "人效概况": result["headcount"]["summary"],
+                    "编制利用": result["budget"]["summary"],
+                    "组织结构": result["structure"]["span_of_control"],
+                    "健康评分": result["health_score"]["overall_score"],
+                    "健康等级": result["health_score"]["health_level"]
+                }
+                result["ai_insights"] = await self._generate_health_insights(
+                    summary_data, "health_score", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate full analysis insights: {e}")
+                result["ai_insights"] = "完整组织健康分析已完成，请查看各模块详细数据。"
+        
+        return result
     
     def _get_age_range(self, boundary: int) -> str:
         """获取年龄范围标签"""

@@ -6,7 +6,7 @@ from typing import List, AsyncGenerator
 
 from dashscope import Generation
 from dashscope.api_entities.dashscope_response import GenerationResponse
-from loguru import logger
+from Logging import logger
 
 from ..base import LLMProvider, Message, Tool, ToolCall, ToolCallResult
 

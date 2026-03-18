@@ -9,7 +9,7 @@ from typing import Dict, Set
 from datetime import datetime
 
 from fastapi import WebSocket, WebSocketDisconnect
-from loguru import logger
+from Logging import logger
 
 
 class ConnectionManager:

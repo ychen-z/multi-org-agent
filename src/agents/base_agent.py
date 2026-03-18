@@ -4,16 +4,51 @@ Agent 基类定义
 """
 
 import uuid
+import asyncio
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Callable
 from enum import Enum
 
-from loguru import logger
+from Logging import logger
 
 from src.llm.base import LLMProvider, Message, MessageRole, Tool
 from src.llm.factory import get_llm
+
+
+# 触发 LLM 洞察的关键词
+INSIGHT_TRIGGER_KEYWORDS = [
+    "分析", "为什么", "原因", "建议", "怎么办", "如何",
+    "洞察", "趋势", "预测", "解读", "评估", "诊断"
+]
+
+# 不触发 LLM 的关键词
+NO_INSIGHT_KEYWORDS = [
+    "多少", "几个", "列出", "显示", "查询", "获取"
+]
+
+# 默认洞察 Prompt 模板
+DEFAULT_INSIGHT_PROMPT = """你是一位资深的 HR 数据分析专家。
+
+## 数据摘要
+{data_summary}
+
+## 用户问题
+{user_query}
+
+## 要求
+请基于数据回答用户问题，提供：
+1. 关键发现（2-3 条）
+2. 原因分析（如适用）
+3. 建议行动（如适用）
+
+保持简洁，每条不超过 50 字。直接返回分析内容，不要说"根据数据"等开场白。
+"""
+
+# LLM 调用超时（秒）
+LLM_TIMEOUT = 10
 
 
 class AgentStatus(str, Enum):
@@ -235,5 +270,127 @@ class BaseAgent(ABC):
             )
 
 
-# 需要导入 asyncio
-import asyncio
+    # ==================== 按需 LLM 洞察方法 ====================
+    
+    def _need_insights(self, task: str, include_insights: Optional[bool] = None) -> bool:
+        """
+        判断是否需要生成 AI 洞察
+        
+        Args:
+            task: 用户任务描述
+            include_insights: 显式指定是否需要洞察
+        
+        Returns:
+            是否需要调用 LLM 生成洞察
+        """
+        # 显式指定优先
+        if include_insights is not None:
+            return include_insights
+        
+        task_lower = task.lower()
+        
+        # 检查是否包含不触发关键词
+        for keyword in NO_INSIGHT_KEYWORDS:
+            if keyword in task_lower:
+                return False
+        
+        # 检查是否包含触发关键词
+        for keyword in INSIGHT_TRIGGER_KEYWORDS:
+            if keyword in task_lower:
+                return True
+        
+        # 默认不触发（节省成本）
+        return False
+    
+    async def generate_insights(
+        self,
+        data: Dict[str, Any],
+        task: str,
+        prompt_template: Optional[str] = None,
+        timeout: int = LLM_TIMEOUT
+    ) -> Optional[str]:
+        """
+        生成 AI 洞察
+        
+        Args:
+            data: 分析数据
+            task: 用户任务
+            prompt_template: 自定义 prompt 模板（可选）
+            timeout: 超时时间（秒）
+        
+        Returns:
+            AI 生成的洞察文本，超时或失败返回 None
+        """
+        try:
+            # 准备数据摘要（限制长度）
+            data_summary = self._summarize_data(data)
+            
+            # 构建 prompt
+            template = prompt_template or DEFAULT_INSIGHT_PROMPT
+            prompt = template.format(
+                data_summary=data_summary,
+                user_query=task
+            )
+            
+            # 带超时的 LLM 调用
+            response = await asyncio.wait_for(
+                self.chat(prompt),
+                timeout=timeout
+            )
+            
+            logger.info(f"Agent {self.agent_id}: AI insights generated")
+            return response
+            
+        except asyncio.TimeoutError:
+            logger.warning(f"Agent {self.agent_id}: LLM timeout after {timeout}s")
+            return None
+        except Exception as e:
+            logger.warning(f"Agent {self.agent_id}: LLM insights failed: {e}")
+            return None
+    
+    def _summarize_data(self, data: Dict[str, Any], max_length: int = 2000) -> str:
+        """
+        将数据转换为摘要字符串（限制长度）
+        
+        Args:
+            data: 数据字典
+            max_length: 最大字符数
+        
+        Returns:
+            JSON 格式的数据摘要
+        """
+        try:
+            # 简化数据：只保留关键字段，限制列表长度
+            simplified = self._simplify_data(data)
+            
+            json_str = json.dumps(simplified, ensure_ascii=False, indent=2)
+            
+            if len(json_str) > max_length:
+                json_str = json_str[:max_length] + "\n... (数据已截断)"
+            
+            return json_str
+        except Exception:
+            return str(data)[:max_length]
+    
+    def _simplify_data(self, data: Any, max_list_items: int = 5) -> Any:
+        """简化数据结构"""
+        if isinstance(data, dict):
+            return {k: self._simplify_data(v, max_list_items) for k, v in data.items()}
+        elif isinstance(data, list):
+            if len(data) > max_list_items:
+                return [self._simplify_data(item, max_list_items) for item in data[:max_list_items]] + [f"... 还有 {len(data) - max_list_items} 条"]
+            return [self._simplify_data(item, max_list_items) for item in data]
+        else:
+            return data
+    
+    def _get_fallback_insight(self, data: Dict[str, Any]) -> str:
+        """
+        LLM 失败时的回退洞察（子类可覆盖）
+        
+        Args:
+            data: 分析数据
+        
+        Returns:
+            规则生成的简单洞察
+        """
+        return "暂无 AI 洞察，请查看详细数据。"

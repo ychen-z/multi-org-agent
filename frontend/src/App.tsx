@@ -6,6 +6,7 @@ import Performance from "./pages/Performance";
 import TalentRisk from "./pages/TalentRisk";
 import OrgHealth from "./pages/OrgHealth";
 import StrategicReport from "./pages/StrategicReport";
+import ChatPage from "./pages/ChatPage";
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
         <Route path="/talent-risk" element={<TalentRisk />} />
         <Route path="/org-health" element={<OrgHealth />} />
         <Route path="/report" element={<StrategicReport />} />
+        <Route path="/chat" element={<ChatPage />} />
       </Routes>
     </Layout>
   );

@@ -6,7 +6,7 @@
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-from loguru import logger
+from Logging import logger
 
 from .base_agent import BaseAgent, AgentMessage, AgentResponse, AgentTool
 from src.data.mongodb import mongodb
@@ -84,32 +84,181 @@ class PerformanceAgent(BaseAgent):
         ))
     
     async def process(self, message: AgentMessage) -> AgentResponse:
-        """处理消息"""
+        """处理消息 - 支持按需 LLM 洞察"""
         task = message.payload.get("task", "")
+        include_insights = message.payload.get("include_insights")
         
         try:
             if "分布" in task:
-                result = await self.analyze_performance_distribution()
+                result = await self.analyze_performance_distribution(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "OKR" in task.upper() or "完成" in task:
-                result = await self.analyze_okr_completion()
+                result = await self.analyze_okr_completion(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "管理者" in task or "风格" in task:
-                result = await self.analyze_manager_style()
+                result = await self.analyze_manager_style(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "强制" in task or "合规" in task:
-                result = await self.check_forced_distribution()
+                result = await self.check_forced_distribution(
+                    include_insights=include_insights,
+                    task=task
+                )
             elif "通胀" in task:
-                result = await self.detect_performance_inflation()
+                result = await self.detect_performance_inflation(
+                    include_insights=include_insights,
+                    task=task
+                )
             else:
-                result = await self.run_full_analysis()
+                result = await self.run_full_analysis(
+                    include_insights=include_insights,
+                    task=task
+                )
             
             return AgentResponse(success=True, data=result)
         except Exception as e:
             logger.error(f"PerformanceAgent error: {e}")
             return AgentResponse(success=False, error=str(e))
     
+    async def _generate_performance_insights(
+        self,
+        data: Dict[str, Any],
+        analysis_type: str,
+        task: Optional[str] = None
+    ) -> str:
+        """生成绩效分析洞察"""
+        
+        prompts = {
+            "distribution": f"""作为绩效管理专家，分析以下绩效分布数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 分布是否符合强制分布要求？偏差原因？
+2. 各等级分布的合理性分析
+3. 需要关注的部门或团队
+4. 优化建议和校准方案
+
+{f"用户特别关注：{task}" if task else ""}
+
+要求：数据支撑、可操作""",
+
+            "okr": f"""作为 OKR 教练，分析以下 OKR 完成度数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 整体完成度评价
+2. 高绩效部门的成功经验
+3. 低绩效部门的问题诊断
+4. 下一周期 OKR 设定建议
+
+{f"用户特别关注：{task}" if task else ""}""",
+
+            "manager_style": f"""作为领导力顾问，分析以下管理者评分风格数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 评分风格分布解读
+2. 宽松/严格管理者的影响
+3. 评分一致性问题分析
+4. 校准培训建议
+
+{f"用户特别关注：{task}" if task else ""}""",
+
+            "compliance": f"""作为 HR 合规专家，分析以下强制分布合规数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 合规性整体评估
+2. 主要违规问题分析
+3. 部门层面的风险点
+4. 合规改进路径
+
+{f"用户特别关注：{task}" if task else ""}""",
+
+            "inflation": f"""作为组织诊断专家，分析以下绩效通胀数据：
+
+数据摘要：
+{self._summarize_data(data)}
+
+请提供：
+1. 通胀趋势判断
+2. 通胀对组织的影响
+3. 根本原因分析
+4. 纠偏措施建议
+
+{f"用户特别关注：{task}" if task else ""}"""
+        }
+        
+        prompt = prompts.get(analysis_type, prompts["distribution"])
+        return await self.generate_insights(prompt, data, analysis_type)
+    
+    def _get_performance_fallback_insight(
+        self, 
+        data: Dict[str, Any], 
+        analysis_type: str
+    ) -> str:
+        """绩效分析回退洞察"""
+        
+        if analysis_type == "distribution":
+            health = data.get("health_assessment", {})
+            return (
+                f"绩效分布健康度 {health.get('health_score', 0)}，"
+                f"状态：{health.get('status', '未知')}。"
+                f"{'存在问题：' + '、'.join(health.get('issues', [])) if health.get('issues') else '分布整体正常。'}"
+            )
+        
+        elif analysis_type == "okr":
+            overall = data.get("overall", {})
+            return (
+                f"OKR 平均完成度 {overall.get('avg_completion', 0)}%，"
+                f"高绩效者 {overall.get('high_achievers', 0)} 人，"
+                f"需关注 {overall.get('low_achievers', 0)} 人。"
+            )
+        
+        elif analysis_type == "manager_style":
+            summary = data.get("style_summary", {})
+            return (
+                f"管理者评分风格：宽松型 {summary.get('lenient', 0)} 人，"
+                f"严格型 {summary.get('strict', 0)} 人，"
+                f"均衡型 {summary.get('balanced', 0)} 人。"
+            )
+        
+        elif analysis_type == "compliance":
+            is_compliant = data.get("is_compliant", False)
+            return (
+                "强制分布合规。" if is_compliant 
+                else f"存在 {len(data.get('overall_issues', []))} 项合规问题，建议召开校准会议。"
+            )
+        
+        elif analysis_type == "inflation":
+            detected = data.get("inflation_detected", False)
+            trend = data.get("trend_direction", "未知")
+            return (
+                f"绩效趋势{trend}，"
+                f"{'检测到通胀风险，建议重新校准评定标准。' if detected else '未检测到明显通胀。'}"
+            )
+        
+        return "绩效分析完成，建议结合具体场景解读。"
+    
     async def analyze_performance_distribution(
         self,
         period: Optional[str] = None,
-        department_id: Optional[str] = None
+        department_id: Optional[str] = None,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
     ) -> Dict[str, Any]:
         """分析绩效分布"""
         
@@ -174,15 +323,34 @@ class PerformanceAgent(BaseAgent):
                 by_department[dept] = {}
             by_department[dept][rating] = r["count"]
         
-        return {
+        result = {
             "period": period or "all",
             "total_records": total,
             "distribution": distribution,
             "by_department": by_department,
             "health_assessment": self._assess_distribution_health(distribution)
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_performance_insights(
+                    result, "distribution", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate distribution insights: {e}")
+                result["ai_insights"] = self._get_performance_fallback_insight(
+                    result, "distribution"
+                )
+        
+        return result
     
-    async def analyze_okr_completion(self, period: Optional[str] = None) -> Dict[str, Any]:
+    async def analyze_okr_completion(
+        self, 
+        period: Optional[str] = None,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """分析 OKR 完成度"""
         
         match_stage = {"okr_score": {"$exists": True}}
@@ -224,7 +392,7 @@ class PerformanceAgent(BaseAgent):
         
         by_dept = await mongodb.performance_records.aggregate(dept_pipeline).to_list(50)
         
-        return {
+        result = {
             "period": period or "all",
             "overall": {
                 "avg_completion": round(overall_stats.get("avg_completion", 0) * 100, 2),
@@ -243,8 +411,26 @@ class PerformanceAgent(BaseAgent):
             "top_departments": [d["_id"] for d in by_dept[:3]],
             "bottom_departments": [d["_id"] for d in by_dept[-3:]] if len(by_dept) > 3 else []
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_performance_insights(
+                    result, "okr", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate OKR insights: {e}")
+                result["ai_insights"] = self._get_performance_fallback_insight(
+                    result, "okr"
+                )
+        
+        return result
     
-    async def analyze_manager_style(self) -> Dict[str, Any]:
+    async def analyze_manager_style(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """分析管理者评分风格"""
         
         # 按评审人统计
@@ -298,7 +484,7 @@ class PerformanceAgent(BaseAgent):
                 "concentration": round(max_concentration * 100, 2)
             })
         
-        return {
+        result = {
             "overall_avg_score": round(overall_avg, 2),
             "total_managers": len(managers),
             "managers": managers[:20],
@@ -310,8 +496,27 @@ class PerformanceAgent(BaseAgent):
             "attention_needed": lenient_managers[:5] + strict_managers[:5],
             "recommendation": "对评分偏差较大的管理者进行绩效评定培训"
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_performance_insights(
+                    result, "manager_style", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate manager style insights: {e}")
+                result["ai_insights"] = self._get_performance_fallback_insight(
+                    result, "manager_style"
+                )
+        
+        return result
     
-    async def check_forced_distribution(self, period: Optional[str] = None) -> Dict[str, Any]:
+    async def check_forced_distribution(
+        self, 
+        period: Optional[str] = None,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """检查强制分布合规性"""
         
         distribution = await self.analyze_performance_distribution(period=period)
@@ -345,7 +550,7 @@ class PerformanceAgent(BaseAgent):
                         "deviation": f"{(actual - standard) * 100:+.1f}%"
                     })
         
-        return {
+        result = {
             "period": period or "all",
             "is_compliant": len(compliance_issues) == 0,
             "overall_issues": compliance_issues,
@@ -355,8 +560,26 @@ class PerformanceAgent(BaseAgent):
                 "关注偏差较大的部门" if dept_issues else ""
             ]
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_performance_insights(
+                    result, "compliance", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate compliance insights: {e}")
+                result["ai_insights"] = self._get_performance_fallback_insight(
+                    result, "compliance"
+                )
+        
+        return result
     
-    async def detect_performance_inflation(self) -> Dict[str, Any]:
+    async def detect_performance_inflation(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """检测绩效通胀"""
         
         # 按周期统计平均分
@@ -401,23 +624,60 @@ class PerformanceAgent(BaseAgent):
         else:
             trend_direction = "数据不足"
         
-        return {
+        result = {
             "inflation_detected": inflation_detected,
             "trend_direction": trend_direction,
             "historical_trends": trends,
             "analysis": f"平均绩效分数从 {trends[0]['avg_score']} 变化到 {trends[-1]['avg_score']}" if trends else "",
             "recommendation": "建议重新校准绩效评定标准" if inflation_detected else "绩效评定整体稳定"
         }
+        
+        # 按需生成 AI 洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                result["ai_insights"] = await self._generate_performance_insights(
+                    result, "inflation", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate inflation insights: {e}")
+                result["ai_insights"] = self._get_performance_fallback_insight(
+                    result, "inflation"
+                )
+        
+        return result
     
-    async def run_full_analysis(self) -> Dict[str, Any]:
+    async def run_full_analysis(
+        self,
+        include_insights: Optional[bool] = None,
+        task: Optional[str] = None
+    ) -> Dict[str, Any]:
         """运行完整绩效分析"""
-        return {
+        result = {
             "distribution": await self.analyze_performance_distribution(),
             "okr_completion": await self.analyze_okr_completion(),
             "manager_style": await self.analyze_manager_style(),
             "forced_distribution_check": await self.check_forced_distribution(),
             "inflation_detection": await self.detect_performance_inflation()
         }
+        
+        # 按需生成综合洞察
+        if self._need_insights(task or "", include_insights):
+            try:
+                summary_data = {
+                    "分布健康度": result["distribution"]["health_assessment"],
+                    "OKR完成度": result["okr_completion"]["overall"],
+                    "管理者风格": result["manager_style"]["style_summary"],
+                    "合规状态": result["forced_distribution_check"]["is_compliant"],
+                    "通胀风险": result["inflation_detection"]["inflation_detected"]
+                }
+                result["ai_insights"] = await self._generate_performance_insights(
+                    summary_data, "distribution", task
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate full analysis insights: {e}")
+                result["ai_insights"] = "完整绩效分析已完成，请查看各模块详细数据。"
+        
+        return result
     
     def _assess_distribution_health(self, distribution: Dict) -> Dict[str, Any]:
         """评估分布健康度"""

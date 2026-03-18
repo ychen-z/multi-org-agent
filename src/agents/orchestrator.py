@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional, TypedDict, Callable, Awaitable
 from datetime import datetime
 from enum import Enum
 
-from loguru import logger
+from Logging import logger
 
 from .base_agent import BaseAgent, AgentMessage, AgentResponse, AgentTool
 from .data_governance import DataGovernanceAgent

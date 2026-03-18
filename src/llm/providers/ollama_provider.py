@@ -6,7 +6,7 @@ import json
 from typing import List, AsyncGenerator
 
 import httpx
-from loguru import logger
+from Logging import logger
 
 from ..base import LLMProvider, Message, Tool, ToolCall, ToolCallResult
 

@@ -10,7 +10,7 @@ from typing import Any, Optional
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorCollection
 from pymongo import IndexModel, ASCENDING, DESCENDING
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
-from loguru import logger
+from Logging import logger
 
 
 class MongoDB:

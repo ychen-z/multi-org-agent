@@ -11,7 +11,7 @@ import uuid
 
 import numpy as np
 from faker import Faker
-from loguru import logger
+from Logging import logger
 
 from .models import (
     Employee, Department, PerformanceRecord, RecruitmentRecord, RiskAssessment,

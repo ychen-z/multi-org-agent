@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-from loguru import logger
+from Logging import logger
 
 from src.data.mongodb import mongodb
 

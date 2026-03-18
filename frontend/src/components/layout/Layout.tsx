@@ -9,6 +9,7 @@ const navItems = [
   { path: "/talent-risk", label: "人才风险", icon: "⚠️" },
   { path: "/org-health", label: "组织健康", icon: "🏢" },
   { path: "/report", label: "战略报告", icon: "📋" },
+  { path: "/chat", label: "AI 对话", icon: "💬" },
 ];
 
 interface LayoutProps {

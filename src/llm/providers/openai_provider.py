@@ -6,7 +6,7 @@ import json
 from typing import List, Dict, Any, Optional, AsyncGenerator
 
 from openai import AsyncOpenAI
-from loguru import logger
+from Logging import logger
 
 from ..base import LLMProvider, Message, Tool, ToolCall, ToolCallResult
 

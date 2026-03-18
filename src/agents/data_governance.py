@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 import re
 
-from loguru import logger
+from Logging import logger
 
 from .base_agent import BaseAgent, AgentMessage, AgentResponse, AgentTool
 from src.data.mongodb import mongodb

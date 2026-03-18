@@ -19,6 +19,8 @@ class AnalysisRequest(BaseModel):
     period: Optional[str] = None
     department_id: Optional[str] = None
     filters: Optional[dict] = None
+    include_insights: Optional[bool] = None  # 是否需要 AI 洞察
+    task: Optional[str] = None  # 自然语言任务描述
 
 
 class AnalysisResponse(BaseModel):
@@ -172,7 +174,37 @@ async def performance_analysis(request: AnalysisRequest = AnalysisRequest()):
 
 @router.post("/talent-risk")
 async def talent_risk_analysis(request: AnalysisRequest = AnalysisRequest()):
-    """人才风险分析"""
+    """
+    人才风险分析
+    
+    - 默认返回风险统计数据
+    - 设置 include_insights=true 或 task 包含"分析"等关键词时，生成 AI 洞察
+    """
+    from src.agents.talent_risk import TalentRiskAgent
+    
+    # 判断是否使用 Agent（需要 AI 洞察时）
+    use_agent = request.include_insights or (
+        request.task and any(kw in request.task for kw in ["分析", "为什么", "建议", "原因"])
+    )
+    
+    if use_agent:
+        # 使用 Agent 分析（含 AI 洞察）
+        agent = TalentRiskAgent()
+        result = await agent.run(
+            task=request.task or "分析人才风险",
+            include_insights=request.include_insights,
+            department_id=request.department_id
+        )
+        
+        if result.success:
+            return {
+                "success": True,
+                "data": result.data
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.error)
+    
+    # 简单查询模式（不调用 LLM）
     pipeline = [
         {"$group": {
             "_id": "$risk_level",
@@ -218,6 +250,8 @@ async def org_health_analysis(request: AnalysisRequest = AnalysisRequest()):
     # 2. 部门统计（编制利用率）
     dept_stats = await mongodb.departments.aggregate([
         {"$project": {
+            "_id": 0,  # 排除 MongoDB ObjectId，避免 JSON 序列化问题
+            "department_id": 1,
             "name": 1,
             "headcount_budget": 1,
             "headcount_actual": 1,
